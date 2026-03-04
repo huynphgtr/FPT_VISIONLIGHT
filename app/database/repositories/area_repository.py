@@ -48,11 +48,12 @@ class AreaRepository:
             )
         
         self.db.execute(
-            "INSERT INTO history_log (area_id, event_type, description) VALUES (?, ?, ?)",
+            "INSERT INTO history_log (area_id, event_type, description, created_at) VALUES (?, ?, ?, ?)",
             (
                 area_id,
                 "override",
                 f"Override set to {current_mode} until {override_str} (Priority {last_priority})",
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             ),
         )
         self.db.commit()
@@ -81,11 +82,12 @@ class AreaRepository:
                 (area_id,)
             )
             self.db.execute(
-                "INSERT INTO history_log (area_id, event_type, description) VALUES (?, ?, ?)",
+                "INSERT INTO history_log (area_id, event_type, description, created_at) VALUES (?, ?, ?, ?)",
                 (
                     area_id,
                     "auto",
                     f"Area {area_id} returned to AUTO mode after manual timeout",
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 ),
             )
             
@@ -111,11 +113,12 @@ class AreaRepository:
             )
         # 2. Ghi log vào bảng history_log
         self.db.execute(
-            "INSERT INTO history_log (area_id, event_type, description) VALUES (?, ?, ?)",
+            "INSERT INTO history_log (area_id, event_type, description, created_at) VALUES (?, ?, ?, ?)",
             (
                 area_id,
                 "auto",
                 f"Auto mode set to {state} for area. Detail: {description}",
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             ),
         )
         

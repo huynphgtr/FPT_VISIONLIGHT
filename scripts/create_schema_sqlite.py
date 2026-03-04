@@ -74,7 +74,7 @@ CREATE TABLE history_log (
     area_id INTEGER,
     event_type TEXT,
     description TEXT,
-    created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    created_at DATETIME NOT NULL,
     FOREIGN KEY (area_id) REFERENCES areas (area_id) ON DELETE SET NULL
 );
 
@@ -90,9 +90,9 @@ def recreate_db():
     if os.path.exists(abs_path):
         try:
             os.remove(abs_path)
-            print(f"🗑️ Đã xóa Database cũ tại: {abs_path}")
+            print(f"Đã xóa Database cũ tại: {abs_path}")
         except PermissionError:
-            print(f"❌ Lỗi: File DB đang được mở bởi ứng dụng khác. Hãy tắt nó trước.")
+            print(f"Lỗi: File DB đang được mở bởi ứng dụng khác. Hãy tắt nó trước.")
             return
 
     # BƯỚC 2: TẠO DB MỚI VÀ SCHEMA
