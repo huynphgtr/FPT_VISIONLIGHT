@@ -25,7 +25,6 @@ class CameraSimulator:
             conn = sqlite3.connect(DB_PATH)
             conn.row_factory = sqlite3.Row
             cur = conn.cursor()
-            # Lấy đúng các trường bạn đã liệt kê
             query = "SELECT ip_address, mqtt_topic FROM devices WHERE UPPER(device_type) = 'CAMERA'"
             cur.execute(query)
             rows = cur.fetchall()

@@ -24,6 +24,13 @@ class AreaOverrideRequest(BaseModel):
             raise ValueError("state must be 'ON' or 'OFF'")
         return v2
 
+class AreaConfigUpdateRequest(BaseModel):
+    min_person: Optional[int] = Field(None, ge=0, description="Minimum number of people to trigger lights ON")
+    lux_threshold: Optional[int] = Field(None, ge=0, description="Maximum lux value to trigger lights ON")
+    override_timeout: Optional[int] = Field(None, ge=0, description="Duration of manual override before reverting to AUTO")
+    off_delay: Optional[int] = Field(None, ge=0, description="Delay in seconds before turning lights OFF when empty")
+
+
 @router.get("/status", response_model=List[Dict[str, Any]])
 def get_list_areas_status(
                     area_repo: AreaRepository = Depends(get_area_repo),
@@ -111,3 +118,32 @@ def get_history(
     """Return last 20 history log entries for the area."""
     rows = area_repo.get_history_logs(area_id, limit=20)
     return rows
+
+@router.put("/{area_id}/config", response_model=Dict[str, Any])
+def update_area_config(
+        area_id: int,
+        payload: AreaConfigUpdateRequest,
+        area_repo: AreaRepository = Depends(get_area_repo)
+) -> Dict[str, Any]:
+    """Update configuration parameters (AI thresholds) for an area."""
+    # 1. Kiểm tra tồn tại
+    if not area_repo.check_area_exists(area_id):
+        raise HTTPException(status_code=404, detail="Area not found")
+
+    # 2. Xây dựng dictionary các giá trị cần cập nhật
+    updates = payload.dict(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No parameters provided for update")
+
+    # 3. Gọi Repo cập nhật CSDL
+    try:
+        area_repo.update_config(area_id, updates)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+    # 4. Trả về cấu hình mới nhất
+    config = area_repo.get_config(area_id)
+    if not config:
+        raise HTTPException(status_code=500, detail="Failed to retrieve updated config")
+        
+    return config

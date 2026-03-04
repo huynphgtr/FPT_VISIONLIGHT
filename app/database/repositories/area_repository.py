@@ -358,6 +358,28 @@ class AreaRepository:
                     pass
         return cfg
 
+    def update_config(self, area_id: int, updates: Dict[str, Any]) -> None:
+        """Cập nhật cấu hình config_param của một khu vực từ dictionary các trường được truyền lên."""
+        if not updates:
+            return
+            
+        # Lọc các trường hợp lệ
+        valid_keys = {"min_person", "lux_threshold", "override_timeout", "off_delay"}
+        filtered_updates = {k: v for k, v in updates.items() if k in valid_keys and v is not None}
+        
+        if not filtered_updates:
+            return
+            
+        # Tạo câu SQL động
+        set_clauses = [f"{k} = ?" for k in filtered_updates.keys()]
+        values = list(filtered_updates.values())
+        values.append(area_id)
+        
+        sql = f"UPDATE config_param SET {', '.join(set_clauses)} WHERE area_id = ?"
+        
+        self.db.execute(sql, tuple(values))
+        self.db.commit()
+
     def get_history_logs(self, area_id: int, limit: int = 100) -> List[Dict[str, Any]]:
         """Return list of history log entries for an area, ordered by most recent first."""
         query = "SELECT * FROM history_log WHERE area_id = ? ORDER BY created_at DESC LIMIT ?"       

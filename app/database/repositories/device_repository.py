@@ -1,6 +1,7 @@
 """Repository for device-related database queries using sqlite3.
 Provides:
 - load_camera_topics()
+- get_relays_by_area_id(area_id)
 - get_relays_for_area(area_id)
 - get_device_by_ip(ip)
 - get_device_by_topic(topic)
@@ -14,22 +15,12 @@ from app.database.db import get_db_connection
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-
 class DeviceRepository:
     
     def __init__(self, db_conn: sqlite3.Connection) -> None:
         self.db = db_conn
         self._camera_topic_map: Dict[str, str] = {}
         
-    
-    def get_relays_by_area_id(self, area_id: int) -> List[Dict[str, Any]]:                
-        cur = self.db.execute(
-            "SELECT device_id, device_name, mqtt_topic, status FROM devices WHERE area_id = ? AND UPPER(device_type) = 'RELAY'",
-            (area_id,),
-        )
-        relays = [dict(r) for r in cur.fetchall()]
-        return relays
-
     def load_camera_topics(self) -> List[str]:
         """Load camera topics and their ip addresses from devices table."""        
         cur = self.db.execute("SELECT ip_address, mqtt_topic FROM devices WHERE UPPER(device_type) = 'CAMERA'")
@@ -45,6 +36,14 @@ class DeviceRepository:
                     self._camera_topic_map[topic] = ip
         logger.info("Loaded %d camera topics from DB", len(topics))
         return topics
+    
+    def get_relays_by_area_id(self, area_id: int) -> List[Dict[str, Any]]:                  
+        cur = self.db.execute(
+            "SELECT device_id, device_name, mqtt_topic, status FROM devices WHERE area_id = ? AND UPPER(device_type) = 'RELAY'",
+            (area_id,),
+        )
+        relays = [dict(r) for r in cur.fetchall()]
+        return relays
 
     def get_relays_for_area(self, area_id: int) -> List[str]:        
         cur = self.db.execute(
