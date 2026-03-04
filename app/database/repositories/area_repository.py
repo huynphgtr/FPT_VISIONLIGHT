@@ -1,11 +1,5 @@
 """Repository for area-related database queries using sqlite3.
 
-Provides:
-- get_area_by_device_ip(ip_address)
-- get_active_schedule(area_id)
-- get_override_status(area_id)
-- get_config(area_id)
-
 All methods use context managers and return dictionaries (or empty dict if nothing found).
 """
 from __future__ import annotations
@@ -27,7 +21,6 @@ class AreaRepository:
         return [dict(r) for r in rows]
 
     def check_area_exists(self, area_id: int) -> bool:
-        """Kiểm tra Area có tồn tại không."""
         cur = self.db.execute("SELECT 1 FROM areas WHERE area_id = ? LIMIT 1", (area_id,))
         return cur.fetchone() is not None
 
@@ -61,11 +54,9 @@ class AreaRepository:
     def check_and_clear_manual_timeouts(self) -> List[int]:
         """Tìm các khu vực có current_mode='MANUAL' và override_until < now, cập nhật về AUTO."""
         from datetime import timezone
-        # Fix time sync issue with GMT+7
         tz_vn = timezone(timedelta(hours=7))
         now_str = datetime.now(tz_vn).strftime("%Y-%m-%d %H:%M:%S")
         
-        # 1. Tìm các area_id đã hết hạn
         cur = self.db.execute(
             "SELECT area_id FROM area_status WHERE current_mode = 'MANUAL' AND override_until < ?",
             (now_str,)
@@ -75,7 +66,6 @@ class AreaRepository:
         if not expired_areas:
             return []
 
-        # 2. Cập nhật trạng thái
         for area_id in expired_areas:
             self.db.execute(
                 "UPDATE area_status SET current_mode = 'AUTO', last_priority = 3, override_until = NULL WHERE area_id = ?",
@@ -95,11 +85,9 @@ class AreaRepository:
         return expired_areas
 
     def set_area_auto(self, area_id: int, state: str, description: str) -> None:
-        """Thực thi logic cập nhật trạng thái Auto."""
-        # override_until = datetime.now() + timedelta(minutes=minutes)
-        # override_str = override_until.strftime("%Y-%m-%d %H:%M:%S")
+        """Excute login update area_status and history_log"""
 
-        # 1. Cập nhật hoặc Chèn mới trạng thái vào bảng area_status
+        # update or insert area_status
         cur = self.db.execute("SELECT area_id FROM area_status WHERE area_id = ?", (area_id,))
         if cur.fetchone():
             self.db.execute(
@@ -111,7 +99,7 @@ class AreaRepository:
                 "INSERT INTO area_status (area_id, override_until, last_priority, current_mode) VALUES (?, ?, ?, ?)",
                 (area_id, None, 3, state),
             )
-        # 2. Ghi log vào bảng history_log
+        # write log to history_log
         self.db.execute(
             "INSERT INTO history_log (area_id, event_type, description, created_at) VALUES (?, ?, ?, ?)",
             (
@@ -121,15 +109,14 @@ class AreaRepository:
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             ),
         )
-        
-        # 3. Commit để lưu thay đổi
+        # save changes
         self.db.commit()
 
-    def get_override_status(self, area_id: int) -> Optional[Dict[str, Any]]:
-        """Lấy trạng thái override hiện tại."""
-        cur = self.db.execute("SELECT * FROM area_status WHERE area_id = ?", (area_id,))
-        row = cur.fetchone()
-        return dict(row) if row else None
+    # def get_override_status(self, area_id: int) -> Optional[Dict[str, Any]]:
+    #     """Lấy trạng thái override hiện tại."""
+    #     cur = self.db.execute("SELECT * FROM area_status WHERE area_id = ?", (area_id,))
+    #     row = cur.fetchone()
+    #     return dict(row) if row else None
     
     def get_area_by_device_ip(self, ip_address: str) -> Dict[str, Any]:
         """Return a dict with the area's id for a device IP, or empty dict if not found."""
@@ -296,7 +283,6 @@ class AreaRepository:
         If not found, return empty dict.
         """
         query = "SELECT * FROM area_status WHERE area_id = ? LIMIT 1"
-        
         cur = self.db.execute(query, (area_id,))
         row = cur.fetchone()
         if not row:
@@ -332,19 +318,14 @@ class AreaRepository:
         Expected keys: min_person, lux_threshold, off_delay. If not found, return empty dict.
         """
         query = "SELECT * FROM config_param WHERE area_id = ? LIMIT 1"
-        
         cur = self.db.execute(query, (area_id,))
         row = cur.fetchone()
         if not row:
             return {}
         cfg = dict(row)
-
-        # Attempt to ensure numeric fields are typed
-        # lack of param override_timeout? 
         for key in ("min_person", "lux_threshold", "override_timeout", "off_delay"):
             if key in cfg and cfg[key] is not None:
                 try:
-                    # convert to int if it looks like an int otherwise float
                     val = cfg[key]
                     if isinstance(val, (int, float)):
                         cfg[key] = val
@@ -359,31 +340,25 @@ class AreaRepository:
         return cfg
 
     def update_config(self, area_id: int, updates: Dict[str, Any]) -> None:
-        """Cập nhật cấu hình config_param của một khu vực từ dictionary các trường được truyền lên."""
+        """Update configuration AI parameters (min_person, lux_threshold, override_timeout, off_delay) for an area."""
         if not updates:
-            return
-            
-        # Lọc các trường hợp lệ
+            return            
         valid_keys = {"min_person", "lux_threshold", "override_timeout", "off_delay"}
         filtered_updates = {k: v for k, v in updates.items() if k in valid_keys and v is not None}
         
         if not filtered_updates:
-            return
-            
-        # Tạo câu SQL động
+            return  
+        
         set_clauses = [f"{k} = ?" for k in filtered_updates.keys()]
         values = list(filtered_updates.values())
         values.append(area_id)
-        
         sql = f"UPDATE config_param SET {', '.join(set_clauses)} WHERE area_id = ?"
-        
         self.db.execute(sql, tuple(values))
         self.db.commit()
 
     def get_history_logs(self, area_id: int, limit: int = 100) -> List[Dict[str, Any]]:
         """Return list of history log entries for an area, ordered by most recent first."""
         query = "SELECT * FROM history_log WHERE area_id = ? ORDER BY created_at DESC LIMIT ?"       
-        
         cur = self.db.execute(query, (area_id, limit,))
         rows = cur.fetchall()
         return [dict(r) for r in rows]

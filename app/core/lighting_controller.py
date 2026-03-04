@@ -65,7 +65,7 @@ class LightingController:
             timer.start()
 
     def _cancel_off_timer(self, area_id: int):
-        """Hủy bộ đếm ngược nếu người quay lại hoặc có lệnh can thiệp thủ công"""
+        """Cancel off timer when having override or presence detected"""
         with self._lock:
             timer = self._off_timers.pop(area_id, None)
             if timer:
@@ -115,7 +115,6 @@ class LightingController:
         # Gửi lệnh tới Relay
         self._publish_mqtt(area_id, "ON", decision)
 
-           
     def decide(self, ip_address: str, person_count: int, lux: float) -> Dict[str, Any]:
         """Decide the target light action for a device identified by ip_address.
 

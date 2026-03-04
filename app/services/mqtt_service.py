@@ -49,17 +49,27 @@ class MqttService:
         self.device_controller = DeviceController(device_repository=DeviceRepository(db_conn=self.db_conn))
         self.area_repository = AreaRepository(db_conn=self.db_conn)
         self._camera_topic_map: Dict[str, str] = {}
+        # self._relay_topic_map: Dict[str, str] = {}
 
     # ----- MQTT callbacks -----
     def _on_connect(self, client, userdata, flags, rc):
         logger.info("Connected to MQTT broker %s:%d (rc=%s)", self.broker_host, self.broker_port, rc)
-        topics = self.device_controller.load_camera_topics()
-        for t in topics:
+        camera_topics = self.device_controller.load_camera_topics()
+        relay_topics = self.device_controller.load_relay_topics()
+
+        for c in camera_topics:
             try:
-                client.subscribe(t, qos=1)
-                logger.info("Subscribed to camera topic: %s", t)
+                client.subscribe(c, qos=1)
+                logger.info("Subscribed to camera topic: %s", c)
             except Exception as e:
-                logger.exception("Failed to subscribe to %s: %s", t, e)
+                logger.exception("Failed to subscribe to %s: %s", c, e)        
+        
+        for r in relay_topics:
+            try:
+                client.subscribe(r, qos=1)
+                logger.info("Subscribed to relay topic: %s", r)
+            except Exception as e:
+                logger.exception("Failed to subscribe to %s: %s", r, e)
 
     def _on_disconnect(self, client, userdata, rc):
         logger.warning("Disconnected from MQTT broker (rc=%s)", rc)
@@ -140,7 +150,6 @@ class MqttService:
         # Delegate execution, DB update, Timer, and MQTT publishing to the Controller
         self.lighting_controller.process_decision(area_id, decision)
 
-
     # ----- Lifecycle -----
     def start(self) -> None:
         if self._running:
@@ -175,7 +184,6 @@ class MqttService:
             self._client = None
             self._running = False
 
-# Module-level convenience functions so `main.py` can call start_mqtt()/stop_mqtt()
 _mqtt_instance: Optional[MqttService] = None
 
 def start_mqtt(broker_host: str = "localhost", broker_port: int = 1883) -> None:

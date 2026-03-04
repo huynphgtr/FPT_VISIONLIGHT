@@ -1,6 +1,7 @@
 """Device controller implementing the priority logic for controll device in area.
 Provides:
 - load_camera_topics()
+- load_relay_topics()
 - get_relays_for_area(area_id)
 - get_device_by_ip(ip)
 - get_device_by_topic(topic)
@@ -22,6 +23,13 @@ class DeviceController:
         if not topics:
             return []   
         return self.repo.load_camera_topics()
+    
+    def load_relay_topics(self) -> List[str]:
+        """Load relay topics and their ip addresses from devices table."""
+        topics = self.repo.load_relay_topics()
+        if not topics:
+            return []   
+        return self.repo.load_relay_topics()
     
     def get_relays_for_area(self, area_id: int) -> List[str]:
         relays = self.repo.get_relays_for_area(area_id)

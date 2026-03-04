@@ -20,6 +20,7 @@ class DeviceRepository:
     def __init__(self, db_conn: sqlite3.Connection) -> None:
         self.db = db_conn
         self._camera_topic_map: Dict[str, str] = {}
+        self._relay_topic_map: Dict[str, str] = {}
         
     def load_camera_topics(self) -> List[str]:
         """Load camera topics and their ip addresses from devices table."""        
@@ -35,6 +36,22 @@ class DeviceRepository:
                 if ip:
                     self._camera_topic_map[topic] = ip
         logger.info("Loaded %d camera topics from DB", len(topics))
+        return topics
+    
+    def load_relay_topics(self) -> List[str]:
+        """Load relay topics and their ip addresses from devices table."""
+        cur = self.db.execute("SELECT ip_address, mqtt_topic FROM devices WHERE UPPER(device_type) = 'RELAY'")
+        rows = cur.fetchall()
+        topics = []
+        self._relay_topic_map.clear()
+        for r in rows:
+            topic = r["mqtt_topic"] 
+            ip = r["ip_address"]
+            if topic:
+                topics.append(topic)
+                if ip:
+                    self._relay_topic_map[topic] = ip
+        logger.info("Loaded %d relay topics from DB", len(topics))
         return topics
     
     def get_relays_by_area_id(self, area_id: int) -> List[Dict[str, Any]]:                  
