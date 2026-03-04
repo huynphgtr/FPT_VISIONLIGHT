@@ -9,15 +9,113 @@ Priority (highest -> lowest):
 All methods return a dictionary describing the resulting action and metadata for the caller.
 """
 from __future__ import annotations
+import threading
 from typing import Any, Dict, Optional
+
+import logging
 from app.database import db
 from app.database.repositories.area_repository import AreaRepository
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
 
 class LightingController:
+
     def __init__(self, area_repository: AreaRepository) -> None:
         self.repo = area_repository
+        self._off_timers: Dict[int, threading.Timer] = {}
+        self._lock = threading.Lock()
+    
+    def process_decision(self, area_id: int, decision: Dict[str, Any]):
+        """
+        Hàm điều phối: Nhận kết quả từ hàm decide() và thực thi hành động.
+        """
+        action = decision.get("action")
 
+        # 1. Nếu có lệnh ON hoặc MANUAL, phải hủy Timer tắt trễ ngay lập tức
+        if action in ["ON", "MANUAL"]:
+            self._cancel_off_timer(area_id)            
+            # Thực hiện cập nhật trạng thái ON (nếu cần)
+            if action == "ON":
+                self._execute_on(area_id, decision)
+        
+        # 2. Xử lý logic Tắt trễ
+        elif action == "OFF_DELAYED":
+            off_delay = decision.get("off_delay", 0)
+            self._start_off_timer(area_id, off_delay)
+
+        # 3. Nếu là OFF thuần túy (không delay)
+        elif action == "OFF":
+            self._cancel_off_timer(area_id)
+            self._execute_off(area_id)
+
+    def _start_off_timer(self, area_id: int, delay: int):
+        """Khởi tạo bộ đếm ngược để tắt đèn"""
+        with self._lock:
+            # Nếu đã có Timer đang chạy cho khu vực này, không tạo thêm cái mới
+            if area_id in self._off_timers:
+                return
+
+            logger.info(f"[TIMER] Starting {delay}s OFF delay for Area {area_id}")
+            
+            # Tạo Timer: sau 'delay' giây sẽ gọi hàm _execute_off
+            timer = threading.Timer(delay, self._execute_off, args=[area_id])
+            self._off_timers[area_id] = timer
+            timer.start()
+
+    def _cancel_off_timer(self, area_id: int):
+        """Hủy bộ đếm ngược nếu người quay lại hoặc có lệnh can thiệp thủ công"""
+        with self._lock:
+            timer = self._off_timers.pop(area_id, None)
+            if timer:
+                timer.cancel()
+                logger.info(f"[TIMER] Cancelled OFF delay for Area {area_id} - Presence detected!")
+
+    def _publish_mqtt(self, area_id: int, action: str, decision: dict = None):
+        """Gửi lệnh MQTT thực tế đến tất cả các Relay trong Area"""
+        try:
+            from app.services.mqtt_service import _mqtt_instance
+            if not _mqtt_instance or not getattr(_mqtt_instance, '_client', None):
+                logger.error("[ACTUATOR] MQTT client not ready, cannot send command.")
+                return
+
+            relays = _mqtt_instance.device_controller.get_relays_for_area(area_id)
+            if not relays:
+                logger.warning(f"[ACTUATOR] No relays found for area {area_id}")
+                return
+
+            import json
+            pub_payload = {"command": action, "meta": decision or {"source": "auto", "reason": "timer_expiration"}}
+            text = json.dumps(pub_payload)
+
+            for topic in relays:
+                _mqtt_instance._client.publish(topic, text, qos=1)
+                logger.info(f"--- [ACTUATOR] Published MQTT Command: {action} to Relay {topic} ---")
+        except Exception as e:
+            logger.error(f"[ACTUATOR] Failed to publish MQTT: {e}")
+
+    def _execute_off(self, area_id: int):
+        """Hành động thực thi tắt đèn khi Timer kết thúc"""
+        with self._lock:
+            # Xóa khỏi danh sách quản lý nếu Timer tự kết thúc
+            self._off_timers.pop(area_id, None)
+
+        # 1. Cập nhật Database
+        self.repo.set_area_auto(area_id=area_id, state="OFF", description="Auto OFF by system")
+        
+        # 2. Gửi lệnh tới Relay 
+        self._publish_mqtt(area_id, "OFF")
+
+    def _execute_on(self, area_id: int, decision: Dict[str, Any]):
+        """Hành động thực thi bật đèn"""
+        # Cập nhật DB
+        self.repo.set_area_auto(area_id=area_id, state="ON", description=decision.get("reason", "Auto ON by system"))
+        
+        # Gửi lệnh tới Relay
+        self._publish_mqtt(area_id, "ON", decision)
+
+           
     def decide(self, ip_address: str, person_count: int, lux: float) -> Dict[str, Any]:
         """Decide the target light action for a device identified by ip_address.
 
@@ -86,21 +184,67 @@ class LightingController:
 
         return {"action": "OFF", "source": "auto", "reason": "thresholds_not_met", "person_count": person_count, "lux": lux}
     
-    
     # ----- Helper methods -----
     def _normalize_state_from_schedule(self, schedule_row: Dict[str, Any]) -> Optional[str]:
-        """Try to extract schedule action state and return 'ON' or 'OFF' or None if unknown."""
-        # Common keys that might indicate the action/state
+        """Kiểm tra thời gian hiện tại có nằm trong lịch trình hay không và trả về action_state.
+        Nếu không nằm trong lịch trình, trả về None để Logic rơi xuống P3 (Auto AI).
+        """
+        import datetime
+
+        # 1. Trích xuất action_state
         candidates = ("action_state", "state", "action", "command", "desired_state")
-        val = None
+        action_val = None
         for k in candidates:
             if k in schedule_row:
-                val = schedule_row.get(k)
-                if val is not None:
+                action_val = schedule_row.get(k)
+                if action_val is not None:
                     break
-        if val is None:
+        
+        if action_val is None:
             return None
-        return self._normalize_state(val)
+            
+        desired_state = self._normalize_state(action_val)
+
+        # 2. Kiểm tra ngày trong tuần (days_of_week)
+        # Sử dụng timezone locale để đảm bảo đồng bộ với giờ hệ thống
+        now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=7)))
+        
+        # Mapping weekday() từ 0-6 sang Mon-Sun
+        day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        current_day_name = day_names[now.weekday()]
+        
+        days_str = str(schedule_row.get("days_of_week", schedule_row.get("days", "")))
+        if days_str:
+            # Xử lý chuỗi "Mon,Tue,Wed,Thu,Fri,Sat,Sun"
+            valid_days = [d.strip() for d in days_str.split(",") if d.strip()]
+            if valid_days and current_day_name not in valid_days:
+                return None
+                
+        # 3. Kiểm tra thời gian (start_time -> end_time)
+        try:
+            start_str = schedule_row.get("start_time")
+            end_str = schedule_row.get("end_time")
+            
+            if not start_str or not end_str:
+                return desired_state  # Nếu không cài đặt giờ cụ thể, mặc định coi như active theo ngày
+                
+            start_time = datetime.datetime.strptime(str(start_str), "%H:%M:%S").time()
+            end_time = datetime.datetime.strptime(str(end_str), "%H:%M:%S").time()
+            current_time = now.time()
+            
+            # Xử lý trường hợp xuyên qua nửa đêm (VD: 22h tối đến 6h sáng)
+            if start_time <= end_time:
+                is_active = start_time <= current_time <= end_time
+            else:
+                is_active = current_time >= start_time or current_time <= end_time
+                
+            if is_active:
+                return desired_state
+                
+        except Exception as e:
+            logger.error(f"[SCHEDULE] Error parsing time: {e}")
+            
+        return None
 
     def _normalize_state(self, v: Any) -> Optional[str]:
         if isinstance(v, bool):

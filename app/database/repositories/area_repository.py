@@ -31,35 +31,66 @@ class AreaRepository:
         cur = self.db.execute("SELECT 1 FROM areas WHERE area_id = ? LIMIT 1", (area_id,))
         return cur.fetchone() is not None
 
-    def set_area_override(self, area_id: int, minutes: int, state: str) -> None:
-        """Thực thi logic cập nhật trạng thái đè (Override)."""
-        override_until = datetime.now() + timedelta(minutes=minutes)
+    def update_area_status(self, area_id: int, current_mode: str, last_priority: int, override_until: datetime) -> None:
+        """Cập nhật trạng thái area_status với mode và priority."""
         override_str = override_until.strftime("%Y-%m-%d %H:%M:%S")
 
-        # 1. Cập nhật hoặc Chèn mới trạng thái vào bảng area_status
         cur = self.db.execute("SELECT area_id FROM area_status WHERE area_id = ?", (area_id,))
         if cur.fetchone():
             self.db.execute(
                 "UPDATE area_status SET override_until = ?, current_mode = ?, last_priority = ? WHERE area_id = ?",
-                (override_str, state, 1, area_id),
+                (override_str, current_mode, last_priority, area_id),
             )
         else:
             self.db.execute(
                 "INSERT INTO area_status (area_id, override_until, last_priority, current_mode) VALUES (?, ?, ?, ?)",
-                (area_id, override_str, 1, state),
+                (area_id, override_str, last_priority, current_mode),
             )
-        # 2. Ghi log vào bảng history_log
+        
         self.db.execute(
             "INSERT INTO history_log (area_id, event_type, description) VALUES (?, ?, ?)",
             (
                 area_id,
                 "override",
-                f"Override set to {state} for {minutes} minutes until {override_str}",
+                f"Override set to {current_mode} until {override_str} (Priority {last_priority})",
             ),
         )
-        
-        # 3. Commit để lưu thay đổi
         self.db.commit()
+
+    def check_and_clear_manual_timeouts(self) -> List[int]:
+        """Tìm các khu vực có current_mode='MANUAL' và override_until < now, cập nhật về AUTO."""
+        from datetime import timezone
+        # Fix time sync issue with GMT+7
+        tz_vn = timezone(timedelta(hours=7))
+        now_str = datetime.now(tz_vn).strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 1. Tìm các area_id đã hết hạn
+        cur = self.db.execute(
+            "SELECT area_id FROM area_status WHERE current_mode = 'MANUAL' AND override_until < ?",
+            (now_str,)
+        )
+        expired_areas = [row["area_id"] for row in cur.fetchall()]
+        
+        if not expired_areas:
+            return []
+
+        # 2. Cập nhật trạng thái
+        for area_id in expired_areas:
+            self.db.execute(
+                "UPDATE area_status SET current_mode = 'AUTO', last_priority = 3, override_until = NULL WHERE area_id = ?",
+                (area_id,)
+            )
+            self.db.execute(
+                "INSERT INTO history_log (area_id, event_type, description) VALUES (?, ?, ?)",
+                (
+                    area_id,
+                    "auto",
+                    f"Area {area_id} returned to AUTO mode after manual timeout",
+                ),
+            )
+            
+        self.db.commit()
+        return expired_areas
 
     def set_area_auto(self, area_id: int, state: str, description: str) -> None:
         """Thực thi logic cập nhật trạng thái Auto."""
@@ -119,7 +150,9 @@ class AreaRepository:
         rows = cur.fetchall()
         if not rows:
             return {}
-        now = datetime.now()
+        from datetime import timezone, timedelta
+        tz_vn = timezone(timedelta(hours=7))
+        now = datetime.now(tz_vn)
         current_time = now.time()
         # Normalize weekday to 0-6 where Monday == 0
         python_weekday = now.weekday()
@@ -277,7 +310,10 @@ class AreaRepository:
                     if "T" in override_until
                     else datetime.strptime(override_until, "%Y-%m-%d %H:%M:%S")
                 )
-                result["is_overridden"] = dt > datetime.now()
+                from datetime import timezone, timedelta
+                tz_vn = timezone(timedelta(hours=7))
+                dt = dt.replace(tzinfo=tz_vn) if dt.tzinfo is None else dt
+                result["is_overridden"] = dt > datetime.now(tz_vn)
                 # also return parsed ISO string in a consistent format
                 result["override_until"] = dt.isoformat(" ")
             except Exception:

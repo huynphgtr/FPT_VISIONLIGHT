@@ -120,18 +120,7 @@ class MqttService:
 
         logger.info("Processing camera message: ip=%s persons=%s lux=%s", ip, person_count, lux)
 
-        # Decide action
-        decision = self.lighting_controller.decide(ip, person_count, lux)
-        action = decision.get("action")
-        area_id = decision.get("area_id")
-        if not action:
-            logger.info("Controller returned no action for ip=%s", ip)
-            return
-        
-    
-        # logger.info("Area %s: AI decision: %s due to %s", area_id, action, decision['reason'])
-
-        # Lookup area by device ip
+        # Lookup area by device ip FIRST before passing to process_decision
         dev = self.device_controller.get_device_by_ip(ip)
         if not dev:
             logger.warning("No device found with ip=%s; cannot find relay topics", ip)
@@ -141,31 +130,16 @@ class MqttService:
             logger.warning("Device record for ip=%s missing area_id", ip)
             return
 
-        if action in ['ON', 'OFF']:
-            self.area_repository.set_area_auto(
-            area_id=area_id, 
-            state=action,
-            description=f"{decision['reason']}"
-        )
-        
-        # Find relay topics in same area
-        relays = self.device_controller.get_relays_for_area(area_id)
-        if not relays:
-            logger.warning("No relay devices found for area %s (ip=%s)", area_id, ip)
+        # Decide action
+        decision = self.lighting_controller.decide(ip, person_count, lux)
+        action = decision.get("action")
+        if not action or action == "NOOP":
             return
+        logger.info("Area %s: AI decision: %s due to %s", area_id, action, decision.get('reason', ''))
 
-        # Prepare publish payload
-        pub_payload = {"command": action, "meta": decision}
-        if action == "OFF_DELAYED" and "off_delay" in decision:
-            pub_payload["off_delay"] = decision.get("off_delay")
+        # Delegate execution, DB update, Timer, and MQTT publishing to the Controller
+        self.lighting_controller.process_decision(area_id, decision)
 
-        text = json.dumps(pub_payload)
-        for topic in relays:
-            try:
-                client.publish(topic, text, qos=1)
-                logger.info("Published %s to %s", action, topic)
-            except Exception as e:
-                logger.exception("Failed to publish to %s: %s", topic, e)
 
     # ----- Lifecycle -----
     def start(self) -> None:
@@ -201,10 +175,8 @@ class MqttService:
             self._client = None
             self._running = False
 
-
 # Module-level convenience functions so `main.py` can call start_mqtt()/stop_mqtt()
 _mqtt_instance: Optional[MqttService] = None
-
 
 def start_mqtt(broker_host: str = "localhost", broker_port: int = 1883) -> None:
     global _mqtt_instance
@@ -213,7 +185,6 @@ def start_mqtt(broker_host: str = "localhost", broker_port: int = 1883) -> None:
         return
     _mqtt_instance = MqttService(broker_host=broker_host, broker_port=broker_port)
     _mqtt_instance.start()
-
 
 def stop_mqtt() -> None:
     global _mqtt_instance
