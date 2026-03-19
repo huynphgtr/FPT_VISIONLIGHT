@@ -128,7 +128,7 @@ This simulates device inputs (person count, lux values) and tests the lighting d
 ### Lighting Decision & Control
 - `POST /api/areas/{area_id}/decide` - Get lighting decision for area (person_count, lux input)
 - `POST /api/areas/{area_id}/control` - Send control command to devices in area
-- `POST /api/areas/{area_id}/manual` - Set temporary manual override (P1) for an area (ON/OFF)
+- `POST /api/areas/{area_id}/manual/{payload.state}` - Set temporary manual override (P1) for an area (MANUAL_ON/MANUAL_OFF)
 
 ## Key Services
 
