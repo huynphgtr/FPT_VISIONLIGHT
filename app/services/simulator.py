@@ -27,8 +27,7 @@ class CameraSimulator:
             # Lấy thêm area_id để log cho dễ theo dõi kịch bản
             query = "SELECT ip_address, mqtt_topic, area_id FROM devices WHERE UPPER(device_type) = 'CAMERA'"
             cur.execute(query)
-            rows = cur.fetchall()
-            
+            rows = cur.fetchall()            
             self.camera_list = [
                 {"topic": r["mqtt_topic"], "ip": r["ip_address"], "area_id": r["area_id"]} 
                 for r in rows if r["mqtt_topic"]
@@ -54,15 +53,24 @@ class CameraSimulator:
                 # 60-90s: Một camera thấy người, camera kia không thấy (Test cộng dồn)
                 
                 # if elapsed < 30:
-                scenario = "CÓ NGƯỜI RẢI RÁC"
-                def get_data(): return random.randint(1, 3), random.randint(1, 2)
+                scenario = "CÓ NGƯỜI RẢI RÁC (Gửi dạng ID)"
+                def get_data(): 
+                    count = random.randint(1, 3)
+                    # Random IDs from P_1 to P_5 to simulate overlapping
+                    ids = [f"P_{random.randint(1, 6)}" for _ in range(count)]
+                    return ", ".join(set(ids)), random.randint(1, 2)
                 # elif 30 <= elapsed < 60:
                 #     scenario = "KHU VỰC TRỐNG"
-                #     def get_data(): return 0, 4
+                #     def get_data(): return "", 4
                 # else:
-                # scenario = "TEST CỘNG DỒN (Cam 1 có, Cam 2 không)"
-                # Giả lập: chỉ cam đầu tiên của mỗi area thấy người
-                # def get_data(is_first): return (random.randint(2, 5), 1) if is_first else (0, 4)
+                #     scenario = "TEST CỘNG DỒN (Cam 1 có, Cam 2 không)"
+                #     # Giả lập: chỉ cam đầu tiên của mỗi area thấy người
+                #     def get_data(is_first): 
+                #         if is_first:
+                #             count = random.randint(2, 5)
+                #             ids = [f"P_{random.randint(1, 5)}" for _ in range(count)]
+                #             return ", ".join(set(ids)), 1
+                #         return "", 4
 
                 logger.info(f"=== Kịch bản: {scenario} (Elapsed: {int(elapsed)}s) ===")
 
@@ -72,19 +80,18 @@ class CameraSimulator:
                 for cam in self.camera_list:
                     is_first_in_area = cam['area_id'] not in processed_areas
                     processed_areas.add(cam['area_id'])
-
                     if scenario == "TEST CỘNG DỒN (Cam 1 có, Cam 2 không)":
-                        p_count, light_level = get_data(is_first_in_area)
+                        p_ids, light_level = get_data(is_first_in_area)
                     else:
-                        p_count, light_level = get_data()
+                        p_ids, light_level = get_data()
 
                     payload = {
-                        "people": p_count,
+                        "people": p_ids,
                         "light_level": light_level
                     }
 
                     self.client.publish(cam["topic"], json.dumps(payload))
-                    logger.info(f"Sent to {cam['topic']} [Area {cam['area_id']}]: {p_count} người, light_level={light_level}")
+                    logger.info(f"Sent to {cam['topic']} [Area {cam['area_id']}]: IDs [{p_ids}], light_level={light_level}")
 
                 # Chờ 8 giây theo yêu cầu
                 time.sleep(8)

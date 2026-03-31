@@ -35,7 +35,7 @@ class MqttService:
         client_id: Optional[str] = None,
         DATABASE_URL: Optional[str] = None,
     ) -> None:
-        self.broker_host = os.getenv("BROKER_HOST", "100.99.88.11")
+        self.broker_host = os.getenv("BROKER_HOST", "broker.emqx.io")
         self.broker_port = int(os.getenv("BROKER_PORT", "1883"))
         self.keepalive = int(os.getenv("KEEPALIVE", "60"))
         self.client_id = os.getenv("CLIENT_ID", "autolight-controller")
@@ -96,46 +96,22 @@ class MqttService:
             logger.warning("Skipping non-JSON message from %s", msg.topic)
             return
 
-        # --- Extract 2 thông số từ AI: person_count và brightness ---
-        raw_count = data.get("people") or data.get("current_person_count") or data.get("count") or 0
+        # --- Extract 2 thông số từ AI: person_ids và brightness ---
+        raw_people = data.get("people") or data.get("person_ids") or data.get("current_person_count") or data.get("count") or ""
         raw_brightness = data.get("light_level") or data.get("bright") or data.get("brightness") or 0
 
-        # person_count = (
-        #     data.get("person_count")
-        #     or data.get("current_person_count")
-        #     or data.get("count")
-        #     or data.get("people")
-        # )
+        # Normalize person_ids
+        current_cam_ids = set()
+        if isinstance(raw_people, str) and raw_people.strip():
+            current_cam_ids = {p_id.strip() for p_id in raw_people.split(",") if p_id.strip()}
+        elif isinstance(raw_people, list):
+            current_cam_ids = {str(p_id).strip() for p_id in raw_people if str(p_id).strip()}
 
-        # brightness = (
-        #     data.get("brightness")
-        #     or data.get("bright")
-        #     or data.get("light_level")
-        # )
-
-        # Normalize person_count
         try:
-            # person_count = int(person_count) if person_count is not None else 0
-            current_cam_count = int(raw_count)
             brightness_val = int(raw_brightness)
         except Exception:
-            # person_count = 0
-            current_cam_count = 0
             brightness_val = 0
 
-        # Convert brightness (1-4) -> lux value
-        # try:
-        #     brightness = int(brightness) if brightness is not None else None
-        # except Exception:
-        #     brightness = None
-
-        # if brightness is not None and brightness in self.BRIGHTNESS_TO_LUX:
-        #     lux = self.BRIGHTNESS_TO_LUX[brightness]
-        # else:
-        #     # Nếu brightness không hợp lệ, mặc định rất sáng (không bật đèn)
-        #     lux = 99999.0
-        #     logger.warning("Invalid brightness=%s from %s; defaulting lux=99999", brightness, msg.topic)
-        
         current_cam_lux = self.BRIGHTNESS_TO_LUX.get(brightness_val, 99999.0)
         
         # --- Tra cứu device bằng MQTT topic (thay vì IP) ---
@@ -150,8 +126,8 @@ class MqttService:
             logger.warning("Device for topic=%s missing area_id", msg.topic)
             return
 
-        logger.info("Processing AI message: topic=%s persons=%s brightness=%s (lux=%.1f) area=%s",
-                     msg.topic, current_cam_count, brightness_val, current_cam_lux, area_id)
+        logger.info("Processing AI message: topic=%s IDs=%s brightness=%s (lux=%.1f) area=%s",
+                     msg.topic, current_cam_ids, brightness_val, current_cam_lux, area_id)
 
         # --- CẬP NHẬT CACHE ĐA CAMERA ---
         if area_id not in self.area_data_cache:
@@ -159,22 +135,29 @@ class MqttService:
 
         # Lưu giá trị mới nhất của camera này vào cache của Area
         self.area_data_cache[area_id][msg.topic] = {
-            "count": current_cam_count,
+            "ids": current_cam_ids,
             "lux": current_cam_lux
         }
 
-        total_person_count = 0
+        all_area_ids = set()
         min_lux = 99999.0
 
         # Duyệt qua tất cả camera đã từng gửi tin nhắn trong Area này
         for topic, values in self.area_data_cache[area_id].items():
-            total_person_count += values["count"]
+            if "ids" in values:
+                all_area_ids.update(values["ids"])
+            # Fallback cho cache cũ (nếu có lúc đang chạy) xử lý người đếm
+            elif "count" in values:
+                 # nếu cache có đếm, có thể bỏ qua hoặc xử lý (ở đây bỏ qua vì đổi logic)
+                 pass
             # Thường thì chỉ cần 1 góc tối là cần bật đèn, nên ta lấy Min Lux
             if values["lux"] < min_lux:
                 min_lux = values["lux"]
 
+        total_person_count = len(all_area_ids)
+
         logger.info(f"Area {area_id} Aggregation: Topics={len(self.area_data_cache[area_id])} "
-                    f"Total Persons={total_person_count}, Min Lux={min_lux}")
+                    f"Total Persons={total_person_count} (IDs: {all_area_ids}), Min Lux={min_lux}")
         
         # --- Tái sử dụng logic quyết định đèn (decide + process_decision) ---
         # decision = self.lighting_controller.decide(ip, person_count, lux)
