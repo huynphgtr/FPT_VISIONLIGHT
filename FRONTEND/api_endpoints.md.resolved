@@ -1,0 +1,119 @@
+# API Endpoints Documentation
+
+Tài liệu này tổng hợp các API endpoints đã được thực hiện ở Backend nhằm mục đích hỗ trợ Frontend developer tiếp tục công việc kết nối.
+
+> **Base URL**: `http://<domain_or_localhost>:<port>/api`
+
+---
+
+## 1. Lấy trạng thái toàn bộ các khu vực (Areas Status)
+
+- **Endpoint**: `GET /areas/status`
+- **Chức năng**: Trả về danh sách tất cả các khu vực cùng với trạng thái hiện tại, chế độ (current mode), cấu hình (config), lịch trình đang active (schedule) và các relays tương ứng.
+- **Request Parameters / Body**: Không có
+- **Response Format** (JSON Array):
+  ```json
+  [
+    {
+      "area_id": 1,
+      "area_name": "Phòng học 101",
+      "area_type": "CLASSROOM",
+      "status": {
+        "is_overridden": false,
+        "current_mode": "AUTO",
+        "last_priority": 3,
+        "override_until": null
+      },
+      "config": {
+        "min_person": 1,
+        "lux_threshold": 300,
+        "override_timeout": 60,
+        "off_delay": 300
+      },
+      "active_schedule": null,
+      "relays": [
+        {
+          "device_id": "RE01",
+          "mac_address": "AA:BB:CC:DD:EE:01",
+          "name": "Đèn bảng",
+          "state": "OFF"
+        }
+      ]
+    }
+  ]
+  ```
+
+---
+
+## 2. Thiết lập trạng thái thủ công (Manual Override)
+
+- **Endpoint**: `POST /areas/{area_id}/manual`
+- **Chức năng**: Yêu cầu bật/tắt thủ công (override) ánh sáng tại một khu vực nhất định. Trạng thái manual sẽ có độ ưu tiên cao nhất (Priority 1) và duy trì trong khoảng thời gian nhất định (duration_minutes). Khi hết limit thời gian, hệ thống sẽ tự trả về `AUTO` mode.
+- **Path Parameters**:
+  - `area_id` (int): ID của khu vực.
+- **Request Body** (JSON):
+  ```json
+  {
+    "duration_minutes": 60, // (Tùy chọn) Số phút duy trì trạng thái. Nếu bỏ trống lấy mặc định của khu vực
+    "state": "ON" // (Bắt buộc) "ON" hoặc "OFF"
+  }
+  ```
+- **Response Format** (JSON): Trả về trạng thái status mới nhất của khu vực.
+  ```json
+  {
+    "is_overridden": true,
+    "current_mode": "MANUAL",
+    "last_priority": 1,
+    "override_until": "2026-03-11T16:26:05+07:00"
+  }
+  ```
+
+---
+
+## 3. Xem lịch sử hoạt động của khu vực (Area History)
+
+- **Endpoint**: `GET /areas/{area_id}/history`
+- **Chức năng**: Trả về tối đa 20 log lịch sử hoạt động mới nhất của khu vực được chỉ định.
+- **Path Parameters**:
+  - `area_id` (int): ID của khu vực.
+- **Request Parameters / Body**: Không có
+- **Response Format** (JSON Array):
+  ```json
+  [
+    {
+      "log_id": 101,
+      "area_id": 1,
+      "action": "ON",
+      "source": "manual_override",
+      "reason": "manual_override",
+      "timestamp": "2026-03-11T09:20:00+07:00"
+    }
+  ]
+  ```
+
+---
+
+## 4. Cập nhật cấu hình khu vực (Update Area Config)
+
+- **Endpoint**: `PUT /areas/{area_id}/config`
+- **Chức năng**: Cập nhật các thông số cấu hình AI và tự động hóa cho một khu vực nhất định. Chỉ gửi lên các giá trị nào muốn thay đổi.
+- **Path Parameters**:
+  - `area_id` (int): ID của khu vực.
+- **Request Body** (JSON - Các field đều là tùy chọn):
+  ```json
+  {
+    "min_person": 2,          // (Tùy chọn) Số người tối thiểu để bật đèn
+    "lux_threshold": 400,     // (Tùy chọn) Mức sáng tối đa (lux) để hệ thống tự động bật đèn
+    "override_timeout": 120,  // (Tùy chọn) Vị trí giữ manual override trước khi về lại AUTO (phút)
+    "off_delay": 600          // (Tùy chọn) Số giây chờ sau khi không có người trước khi tắt đèn
+  }
+  ```
+- **Response Format** (JSON): Trả về cấu hình mới cập nhật.
+  ```json
+  {
+    "min_person": 2,
+    "lux_threshold": 400,
+    "override_timeout": 120,
+    "off_delay": 600
+  }
+  ```

@@ -1,0 +1,31 @@
+:root {
+  --brand-orange: #f59e0b; /* Cam hổ phách, dịu mắt hơn */
+  --brand-dark: #0f172a;   /* Xanh đen sâu */
+  --brand-green: #10b981;
+  --brand-blue: #3b82f6;
+}
+
+
+/* Thêm hiệu ứng kính cho các card trong darkmode */
+.dark-glass {
+  background: rgba(30, 41, 59, 0.7);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Dark Mode */
+    --bg-main: #0a0a0a; /* Đen */
+    --bg-secondary: #171717;
+    --text-main: #f3f4f6;
+    --text-muted: #9ca3af;
+    --border-color: #262626;
+  }
+}
+
+body {
+  background-color: var(--bg-main);
+  color: var(--text-main);
+}
